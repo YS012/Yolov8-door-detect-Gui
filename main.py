@@ -169,7 +169,6 @@ class YoloPredictor(BasePredictor, QObject):
         self.progress_value = 0  # 进度条的值
 
         self.run_started = 0
-        self.show_graph_flag = 0
         self.loop_flag = 0
         self.stop_thread = 0
         self.X_quit = 0
@@ -258,32 +257,6 @@ class YoloPredictor(BasePredictor, QObject):
             result_list_for_y_axis_in_graph_display = []
             current_time = 0
 
-            def graph_display():
-                nonlocal t_list_for_x_axis_in_graph_display, current_time, result_list_for_y_axis_in_graph_display, sum_of_count
-                plt.figure()
-                fig = plt.gcf()
-                self.loop_flag = 1
-                while self.loop_flag:
-                    if len(plt.get_fignums()) == 0 or self.stop_thread:
-                        plt.close()
-                        self.loop_flag = 0
-                        print('loop quit')
-                        self.X_quit = 1
-                        break
-                    print('drawing')
-                    y = result_list_for_y_axis_in_graph_display
-                    x = t_list_for_x_axis_in_graph_display
-                    plt.xlabel('时间')
-                    plt.ylabel('车流量/辆')
-                    plt.title('实时流量折线图')
-                    fig.set_facecolor(gradient(0.5))
-                    plt.plot(x, y, ls='-', marker='D', mec='yellow', mfc='w')
-                    plt.pause(1)
-                try:
-                    plt.close()
-                except:
-                    pass
-
             sum_of_count = 0
 
             if 'mp4' in self.source or 'avi' in self.source or 'mkv' in self.source or 'flv' in self.source or 'mov' in self.source:
@@ -367,11 +340,8 @@ class YoloPredictor(BasePredictor, QObject):
                                 result_list_for_y_axis_in_graph_display.append(sum_of_count)
 
                             self.yolo2main_trail_img.emit(img_trail)
-                            if self.show_graph and self.show_graph_flag:
+                            if self.show_graph:
                                 self.yolo2main_trail_img.emit(img_trail)
-                                self.graph_thread = threading.Thread(target=graph_display, args=())
-                                self.graph_thread.start()
-                                self.show_graph_flag = 0
                             time.sleep(0.0)  # 缓冲
                             self.yolo2main_box_img.emit(img_box)
 
