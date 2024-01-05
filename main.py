@@ -3,6 +3,8 @@ import ctypes
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMenu
 from PySide6.QtGui import QImage, QPixmap, QColor, QCursor
 from PySide6.QtCore import QTimer, QThread, Signal, QObject, Qt
+from pykinect2 import PyKinectRuntime, PyKinectV2
+
 from ui.CustomMessageBox import MessageBox
 from ui.mainwindow import Ui_MainWindow
 from ui.UIFunctions import *
@@ -167,6 +169,7 @@ class YoloPredictor(BasePredictor, QObject):
         self.conf_thres = 0.25  # conf
         self.speed_thres = 10  # delay, ms
         self.progress_value = 0  # 进度条的值
+        self.kinect_selected = 0 # kinect摄像头被选定标志
 
         self.run_started = 0
         self.loop_flag = 0
@@ -196,14 +199,13 @@ class YoloPredictor(BasePredictor, QObject):
 
         except:
             cv2.destroyAllWindows()
-            pass
 
     # 点击开始检测按钮后的检测事件
     @smart_inference_mode()  # 一个修饰器，用来开启检测模式：如果torch>=1.9.0，则执行torch.inference_mode()，否则执行torch.no_grad()
     def run(self):
         # try:
         LoadStreams.capture = None
-        self.sources = 0
+        # self.sources = 0
         self.run_started = 1
 
         global video_id_count
@@ -240,17 +242,22 @@ class YoloPredictor(BasePredictor, QObject):
 
         if self.continue_dtc:  # 暂停与继续的切换
 
-            try:
-                out.release()
-            except:
-                pass
+            # try:
+            #     out.release()
+            # except:
+            #     pass
             if self.used_model_name != self.new_model_name:
                 self.setup_model(self.new_model_name)
                 self.used_model_name = self.new_model_name
             model = YOLO(self.new_model_name)
+            print('kinect_selected', self.kinect_selected)
+            print('source', self.source)
             iter_model = iter(
                 model.track(source=self.source, show=False, stream=True, iou=self.iou_thres, conf=self.conf_thres))
             self.yolo2main_status_msg.emit('检测中...')
+            if self.kinect_selected:
+                kinect = PyKinectRuntime.PyKinectRuntime(
+                    PyKinectV2.FrameSourceTypes_Depth | PyKinectV2.FrameSourceTypes_Color)
 
             flag_save_video = 1  # 拿来保存视频的flag，免得在后面的循环里面重复执行cv2.VideoWriter()函数
             t_list_for_x_axis_in_graph_display = []
@@ -271,8 +278,19 @@ class YoloPredictor(BasePredictor, QObject):
                     if self.continue_dtc:
                         result = next(iter_model)  # 这里是检测的核心，每次循环都会检测一帧图像,可以自行打印result看看里面有哪些key可以用
                         img_trail = result.orig_img
-                        org = np.copy(img_trail)
+                        # org = np.copy(img_trail)
                         org_2 = np.copy(img_trail)
+
+                        if self.kinect_selected:
+                            frame_depth = kinect.depth_frame_data
+                            key_points = result.keypoints
+                            if key_points:
+                                key_points_xy = result.keypoints.xy[0]
+                                for point in key_points_xy:
+                                    center = tuple(map(int, point))
+                                    if center != (0, 0):
+                                        print('center', center, 'depth',
+                                              frame_depth[center[1] * kinect.depth_frame_desc.Width + center[0]])
 
                         class_num_arr = []
                         detections = sv.Detections.from_ultralytics(result)
@@ -571,6 +589,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.progress_bar.setValue(0)
             if self.yolo_thread.isRunning():
                 self.yolo_thread.quit()  # 终止线程
+            self.yolo_predict.kinect_selected = 0
         elif msg == 'Detection terminated!' or msg == '检测终止':
             self.save_res_button.setEnabled(True)
             self.save_txt_button.setEnabled(True)
@@ -583,6 +602,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.Class_num.setText('--')
             self.Target_num.setText('--')
             self.fps_label.setText('--')
+            self.yolo_predict.kinect_selected = 0
 
     def open_src_file(self):
         config_file = 'config/fold.json'
@@ -604,6 +624,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def camera_select(self):
         # try:
+        pos = QCursor.pos()
         self.stop()
         # 获取本地摄像头数量
         _, cams = Camera().get_cam_num()
@@ -629,11 +650,14 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         for cam in cams:
             exec("action_%s = QAction('%s 号摄像头')" % (cam, cam))
             exec("popMenu.addAction(action_%s)" % cam)
-        pos = QCursor.pos()
         action = popMenu.exec(pos)
         if action:
             str_temp = ''
             selected_stream_source = str_temp.join(filter(str.isdigit, action.text()))  # 获取摄像头号，去除非数字字符
+            if selected_stream_source == str((len(cams) - 1)):
+                self.yolo_predict.kinect_selected = 1
+            else:
+                self.yolo_predict.kinect_selected = 0
             self.yolo_predict.source = selected_stream_source
             self.show_status('摄像头设备:{}'.format(action.text()))
 
@@ -773,6 +797,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.Class_num.setText('--')
         self.Target_num.setText('--')
         self.fps_label.setText('--')
+        self.yolo_predict.kinect_selected = 0
 
     # 检测参数设置
     def change_val(self, x, flag):

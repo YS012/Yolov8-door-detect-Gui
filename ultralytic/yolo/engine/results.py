@@ -15,6 +15,7 @@ import torch
 from ultralytic.yolo.data.augment import LetterBox
 from ultralytic.yolo.utils import LOGGER, SimpleClass, deprecation_warn, ops
 from ultralytic.yolo.utils.plotting import Annotator, colors, save_one_box
+from ultralytic.yolo.utils.torch_utils import smart_inference_mode
 
 
 class BaseTensor(SimpleClass):
@@ -92,7 +93,7 @@ class Results(SimpleClass):
         self.boxes = Boxes(boxes, self.orig_shape) if boxes is not None else None  # native size boxes
         self.masks = Masks(masks, self.orig_shape) if masks is not None else None  # native size or imgsz masks
         self.probs = probs if probs is not None else None
-        self.keypoints = keypoints if keypoints is not None else None
+        self.keypoints = Keypoints(keypoints, self.orig_shape) if keypoints is not None else None
         self.speed = {'preprocess': None, 'inference': None, 'postprocess': None}  # milliseconds per image
         self.names = names
         self.path = path
@@ -165,12 +166,14 @@ class Results(SimpleClass):
             boxes=True,
             masks=True,
             probs=True,
+            kpt_radius = 5,
             **kwargs  # deprecated args TODO: remove support in 8.2
     ):
         """
         Plots the detection results on an input RGB image. Accepts a numpy array (cv2) or a PIL Image.
 
         Args:
+            kpt_radius:
             conf (bool): Whether to plot the detection confidence score.
             line_width (float, optional): The line width of the bounding boxes. If None, it is scaled to the image size.
             font_size (float, optional): The font size of the text. If None, it is scaled to the image size.
@@ -224,9 +227,10 @@ class Results(SimpleClass):
             text = f"{', '.join(f'{names[j] if names else j} {pred_probs[j]:.2f}' for j in top5i)}, "
             annotator.text((32, 32), text, txt_color=(255, 255, 255))  # TODO: allow setting colors
 
-        if keypoints is not None:
-            for k in reversed(keypoints):
-                annotator.kpts(k, self.orig_shape, kpt_line=kpt_line)
+            # Plot Pose results
+        if self.keypoints is not None:
+            for k in reversed(self.keypoints.data):
+                annotator.kpts(k, self.orig_shape, radius=kpt_radius, kpt_line=kpt_line)
 
         return annotator.result()
 
@@ -443,3 +447,98 @@ class Masks(BaseTensor):
     def masks(self):
         LOGGER.warning("WARNING ⚠️ 'Masks.masks' is deprecated. Use 'Masks.data' instead.")
         return self.data
+
+
+class Keypoints(BaseTensor):
+    """
+    A class for storing and manipulating detection keypoints.
+
+    Attributes:
+        xy (torch.Tensor): A collection of keypoints containing x, y coordinates for each detection.
+        xyn (torch.Tensor): A normalized version of xy with coordinates in the range [0, 1].
+        conf (torch.Tensor): Confidence values associated with keypoints if available, otherwise None.
+
+    Methods:
+        cpu(): Returns a copy of the keypoints tensor on CPU memory.
+        numpy(): Returns a copy of the keypoints tensor as a numpy array.
+        cuda(): Returns a copy of the keypoints tensor on GPU memory.
+        to(device, dtype): Returns a copy of the keypoints tensor with the specified device and dtype.
+    """
+
+    @smart_inference_mode()  # avoid keypoints < conf in-place error
+    def __init__(self, keypoints, orig_shape) -> None:
+        """Initializes the Keypoints object with detection keypoints and original image size."""
+        if keypoints.ndim == 2:
+            keypoints = keypoints[None, :]
+        if keypoints.shape[2] == 3:  # x, y, conf
+            mask = keypoints[..., 2] < 0.5  # points with conf < 0.5 (not visible)
+            keypoints[..., :2][mask] = 0
+        super().__init__(keypoints, orig_shape)
+        self.has_visible = self.data.shape[-1] == 3
+
+    @property
+    @lru_cache(maxsize=1)
+    def xy(self):
+        """Returns x, y coordinates of keypoints."""
+        return self.data[..., :2]
+
+    @property
+    @lru_cache(maxsize=1)
+    def xyn(self):
+        """Returns normalized x, y coordinates of keypoints."""
+        xy = self.xy.clone() if isinstance(self.xy, torch.Tensor) else np.copy(self.xy)
+        xy[..., 0] /= self.orig_shape[1]
+        xy[..., 1] /= self.orig_shape[0]
+        return xy
+
+    @property
+    @lru_cache(maxsize=1)
+    def conf(self):
+        """Returns confidence values of keypoints if available, else None."""
+        return self.data[..., 2] if self.has_visible else None
+
+
+class Probs(BaseTensor):
+    """
+    A class for storing and manipulating classification predictions.
+
+    Attributes:
+        top1 (int): Index of the top 1 class.
+        top5 (list[int]): Indices of the top 5 classes.
+        top1conf (torch.Tensor): Confidence of the top 1 class.
+        top5conf (torch.Tensor): Confidences of the top 5 classes.
+
+    Methods:
+        cpu(): Returns a copy of the probs tensor on CPU memory.
+        numpy(): Returns a copy of the probs tensor as a numpy array.
+        cuda(): Returns a copy of the probs tensor on GPU memory.
+        to(): Returns a copy of the probs tensor with the specified device and dtype.
+    """
+
+    def __init__(self, probs, orig_shape=None) -> None:
+        """Initialize the Probs class with classification probabilities and optional original shape of the image."""
+        super().__init__(probs, orig_shape)
+
+    @property
+    @lru_cache(maxsize=1)
+    def top1(self):
+        """Return the index of top 1."""
+        return int(self.data.argmax())
+
+    @property
+    @lru_cache(maxsize=1)
+    def top5(self):
+        """Return the indices of top 5."""
+        return (-self.data).argsort(0)[:5].tolist()  # this way works with both torch and numpy.
+
+    @property
+    @lru_cache(maxsize=1)
+    def top1conf(self):
+        """Return the confidence of top 1."""
+        return self.data[self.top1]
+
+    @property
+    @lru_cache(maxsize=1)
+    def top5conf(self):
+        """Return the confidences of top 5."""
+        return self.data[self.top5]

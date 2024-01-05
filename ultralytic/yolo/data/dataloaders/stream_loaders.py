@@ -31,6 +31,7 @@ class SourceTypes:
 
 class LoadStreams:
     capture = None
+
     # YOLOv8 streamloader, i.e. `yolo predict source='rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP streams`
     def __init__(self, sources='file.streams', imgsz=640, stride=32, auto=True, transforms=None, vid_stride=1):
         torch.backends.cudnn.benchmark = True  # faster for fixed-size inference
@@ -54,7 +55,7 @@ class LoadStreams:
             if s == 0 and (is_colab() or is_kaggle()):
                 raise NotImplementedError("'source=0' webcam not supported in Colab and Kaggle notebooks. "
                                           "Try running 'source=0' in a local environment.")
-            cap = cv2.VideoCapture(s)
+            cap = cv2.VideoCapture(s, cv2.CAP_DSHOW)
             if not cap.isOpened():
                 raise ConnectionError(f'{st}Failed to open {s}')
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -98,6 +99,7 @@ class LoadStreams:
             time.sleep(0.0)  # wait time
             if self.capture == 'release':
                 break
+
     def __iter__(self):
         self.count = -1
         return self
