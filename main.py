@@ -169,7 +169,7 @@ class YoloPredictor(BasePredictor, QObject):
         self.conf_thres = 0.25  # conf
         self.speed_thres = 10  # delay, ms
         self.progress_value = 0  # 进度条的值
-        self.kinect_selected = 0 # kinect摄像头被选定标志
+        self.kinect_selected = 0  # kinect摄像头被选定标志
 
         self.run_started = 0
         self.loop_flag = 0
@@ -250,11 +250,10 @@ class YoloPredictor(BasePredictor, QObject):
                 self.setup_model(self.new_model_name)
                 self.used_model_name = self.new_model_name
             model = YOLO(self.new_model_name)
-            print('kinect_selected', self.kinect_selected)
-            print('source', self.source)
             iter_model = iter(
                 model.track(source=self.source, show=False, stream=True, iou=self.iou_thres, conf=self.conf_thres))
             self.yolo2main_status_msg.emit('检测中...')
+            kinect = None
             if self.kinect_selected:
                 kinect = PyKinectRuntime.PyKinectRuntime(
                     PyKinectV2.FrameSourceTypes_Depth | PyKinectV2.FrameSourceTypes_Color)
@@ -272,6 +271,8 @@ class YoloPredictor(BasePredictor, QObject):
                 cap.release()
 
             store_xyxy_for_id = {}
+            # if self.kinect_selected:
+            #     frame_count = 0
 
             while True:
                 try:
@@ -281,16 +282,20 @@ class YoloPredictor(BasePredictor, QObject):
                         # org = np.copy(img_trail)
                         org_2 = np.copy(img_trail)
 
-                        if self.kinect_selected:
-                            frame_depth = kinect.depth_frame_data
-                            key_points = result.keypoints
-                            if key_points:
-                                key_points_xy = result.keypoints.xy[0]
-                                for point in key_points_xy:
-                                    center = tuple(map(int, point))
-                                    if center != (0, 0):
-                                        print('center', center, 'depth',
-                                              frame_depth[center[1] * kinect.depth_frame_desc.Width + center[0]])
+                        # if self.kinect_selected and kinect is not None:
+                        #     frame_count += 1
+                        #     if frame_count > 8:
+                        #         frame_depth = kinect.depth_frame_data
+                        #         key_points = result.keypoints
+                        #         if key_points:
+                        #             key_points_xy = result.keypoints.xy[0]
+                        #             for point in key_points_xy:
+                        #                 x = int(point[0])
+                        #                 y = int(point[1])
+                        #                 if (x + y) != 0:
+                        #                     print(f'center:({x, y}) ', 'depth',
+                        #                           frame_depth[y * kinect.depth_frame_desc.Width + x])
+                        #         frame_count = 0
 
                         class_num_arr = []
                         detections = sv.Detections.from_ultralytics(result)
